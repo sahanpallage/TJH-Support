@@ -13,6 +13,20 @@ import httpx
 from typing import Any, Dict, Optional
 from config import settings
 
+# Create a persistent HTTP client for connection pooling
+# This reuses connections instead of creating new ones for each request
+_client: Optional[httpx.AsyncClient] = None
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Get or create a persistent HTTP client for connection pooling"""
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _client
+
 
 class JobApplyClient:
     def __init__(self) -> None:
@@ -37,31 +51,21 @@ class JobApplyClient:
     async def create_thread(self) -> Dict[str, Any]:
         """
         Create a new thread/conversation for the Donely agent.
-        Uses the LangGraph API endpoint.
+        Uses the LangGraph API endpoint with connection pooling.
         """
-        async with httpx.AsyncClient(headers=self._headers()) as client:
-            # POST to the /threads endpoint to create a new thread
-            resp = await client.post(
-                f"{self._require_base_url()}/threads",
-                json={},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = await get_http_client()
+        resp = await client.post(
+            f"{self._require_base_url()}/threads",
+            json={},
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def send_message(self, thread_id: str, message: str) -> Dict[str, Any]:
         """
         Send a message to the Donely agent in an existing thread.
-        Uses the LangGraph streaming API.
-        
-        The agent expects input in the format:
-        {
-            "input": {
-                "messages": [
-                    {"role": "user", "content": "message text"}
-                ]
-            },
-            "assistant_id": "your-assistant-id"
-        }
+        Uses the LangGraph streaming API with connection pooling for faster responses.
         """
         if not self.assistant_id:
             raise RuntimeError(
@@ -69,24 +73,23 @@ class JobApplyClient:
                 "Set it in your backend .env file before using the JobApplyClient."
             )
         
-        async with httpx.AsyncClient(headers=self._headers(), timeout=30.0) as client:
-            # Standard LangGraph format with messages and assistant_id
-            payload = {
-                "input": {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": message,
-                        }
-                    ]
-                },
-                "assistant_id": self.assistant_id
-            }
-            
-            url = f"{self._require_base_url()}/threads/{thread_id}/runs/wait"
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        client = await get_http_client()
+        payload = {
+            "input": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": message,
+                    }
+                ]
+            },
+            "assistant_id": self.assistant_id
+        }
+        
+        url = f"{self._require_base_url()}/threads/{thread_id}/runs/wait"
+        resp = await client.post(url, json=payload, headers=self._headers())
+        resp.raise_for_status()
+        return resp.json()
 
     async def create_conversation(self, customer_id: int, title: str) -> Dict[str, Any]:
         """
@@ -103,20 +106,21 @@ class JobApplyClient:
     ) -> Dict[str, Any]:
         """
         Upload a document to the Donely agent.
-        Note: Implementation depends on the agent's document handling.
+        Uses connection pooling for better performance.
         """
-        async with httpx.AsyncClient(headers=self._headers()) as client:
-            files = {
-                "file": (filename, file_bytes, content_type),
-            }
-            data = {"customer_id": str(customer_id)}
-            resp = await client.post(
-                f"{self._require_base_url()}/documents/upload",
-                data=data,
-                files=files,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = await get_http_client()
+        files = {
+            "file": (filename, file_bytes, content_type),
+        }
+        data = {"customer_id": str(customer_id)}
+        resp = await client.post(
+            f"{self._require_base_url()}/documents/upload",
+            data=data,
+            files=files,
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
 
 
 job_apply_client = JobApplyClient()
