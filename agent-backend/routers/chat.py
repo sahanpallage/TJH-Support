@@ -24,42 +24,60 @@ async def send_chat_message(
 
     external_thread_id = cast(str, conv.external_thread_id)
     
-    # Try to send message to external API, with fallback in development
-    external_resp = None
-    if settings.environment == "development" and not settings.JOB_APPLY_API_KEY:
-        # In development without API key, return a mock response
-        external_resp = {
-            "reply": f"Mock response: I received your message '{payload.message}'. This is a development mode response.",
-            "message": payload.message,
-        }
-        print(f"Development mode: Returning mock response for message")
-    else:
-        # Try to call external API
-        try:
-            external_resp = await job_apply_client.send_message(
-                external_thread_id=external_thread_id,
-                message=payload.message,
-            )
-        except Exception as e:
-            # In development, return mock response; in production, raise error
-            if settings.environment == "development":
-                external_resp = {
-                    "reply": f"Mock response: I received your message '{payload.message}'. External API unavailable ({str(e)[:50]}...).",
-                    "message": payload.message,
-                }
-                print(f"Warning: External API failed ({e}), returning mock response")
-            else:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Failed to send message to external agent: {e}",
-                )
+    # Send message to the live Donely agent
+    try:
+        external_resp = await job_apply_client.send_message(
+            thread_id=external_thread_id,
+            message=payload.message,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to send message to agent: {str(e)}",
+        )
 
-    # TODO: adjust field name based on actual response
-    reply_text = (
-        external_resp.get("reply")
-        or external_resp.get("message")
-        or external_resp.get("content")
-        or ""
-    )
+    # Parse the response from LangGraph API
+    # The response typically contains a state with messages
+    reply_text = _extract_reply_from_response(external_resp)
 
     return ChatMessageResponse(reply=reply_text, raw=external_resp)
+
+
+def _extract_reply_from_response(resp: dict) -> str:
+    """
+    Extract the assistant's reply from the LangGraph response.
+    The response structure from Donely includes:
+    - messages: array of message objects
+    - Each message has 'type' (human/ai) and 'content'
+    - We want the last 'ai' type message's content
+    """
+    try:
+        # Check if response has 'messages' array (LangGraph format)
+        messages = resp.get("messages", [])
+        if messages:
+            # Get the last message from the assistant (type='ai')
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get("type") == "ai":
+                    content = msg.get("content", "")
+                    if content:
+                        return content
+            
+            # Fallback: just return the last message's content
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                return last_msg.get("content", "")
+        
+        # Fallback: check for direct message/reply fields
+        if "reply" in resp:
+            return resp.get("reply", "")
+        if "message" in resp:
+            return resp.get("message", "")
+        if "content" in resp:
+            return resp.get("content", "")
+        
+        # If we can't parse, return the whole response as string
+        return str(resp)
+    except Exception as e:
+        print(f"Error parsing response: {e}")
+        return f"Agent response received but parsing failed: {str(e)}"
+

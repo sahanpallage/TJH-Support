@@ -18,40 +18,23 @@ async def create_conversation(
     payload: ConversationCreate,
     db: Session = Depends(get_db),
 ):
-    # 1) Try to create external session, fallback to mock ID in development
-    external_thread_id = None
-    
-    if settings.environment == "development" and not settings.JOB_APPLY_API_KEY:
-        # In development without API key, use a mock thread ID
-        external_thread_id = f"mock-{uuid.uuid4().hex[:16]}"
-        print(f"Development mode: Using mock external_thread_id: {external_thread_id}")
-    else:
-        # Try to call external API
-        try:
-            external_resp = await job_apply_client.create_conversation(
-                customer_id=payload.customer_id,
-                title=payload.title,
-            )
-            # TODO adjust key according to swagger response
-            external_thread_id = (
-                external_resp.get("thread_id")
-                or external_resp.get("id")
-                or external_resp.get("session_id")
-            )
-            if not external_thread_id:
-                raise ValueError("External API did not return a thread ID")
-        except Exception as e:
-            # In development, fallback to mock ID; in production, raise error
-            if settings.environment == "development":
-                external_thread_id = f"mock-{uuid.uuid4().hex[:16]}"
-                print(f"Warning: External API failed ({e}), using mock ID: {external_thread_id}")
-            else:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Failed to create external conversation: {e}",
-                )
+    # Create a new thread on the live Donely agent
+    try:
+        external_resp = await job_apply_client.create_thread()
+        external_thread_id = external_resp.get("thread_id") or external_resp.get("id")
+        
+        if not external_thread_id:
+            raise ValueError(f"Agent did not return a thread ID. Response: {external_resp}")
+        
+        print(f"Created thread with ID: {external_thread_id}")
+    except Exception as e:
+        print(f"Error creating thread with live agent: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to create conversation thread: {str(e)}",
+        )
 
-    # 2) store in local DB
+    # Store in local database
     conv = Conversation(
         customer_id=payload.customer_id,
         title=payload.title,
