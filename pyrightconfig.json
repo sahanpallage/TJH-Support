@@ -1,0 +1,14 @@
+{
+  "include": ["agent-backend"],
+  "exclude": ["**/node_modules", "**/__pycache__", "**/venv"],
+  "venvPath": "agent-backend",
+  "venv": "venv",
+  "executionEnvironments": [
+    {
+      "root": "agent-backend",
+      "pythonVersion": "3.10",
+      "pythonPlatform": "Windows",
+      "extraPaths": []
+    }
+  ]
+}
