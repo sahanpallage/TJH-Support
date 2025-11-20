@@ -34,7 +34,7 @@ async def send_chat_message(
 
     try:
         external_resp = await job_apply_client.send_message(
-            external_thread_id=external_thread_id,
+            thread_id=external_thread_id,
             message=payload.message,
         )
     except Exception as e:

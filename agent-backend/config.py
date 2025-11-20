@@ -3,7 +3,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
+    # Supabase settings
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
+    DATABASE_URL: str | None = None
 
     # JWT Authentication
     secret_key: str
@@ -23,6 +26,13 @@ class Settings(BaseSettings):
     # External API settings
     JOB_APPLY_API_BASE: str | None = None
     JOB_APPLY_API_KEY: str | None = None
+    JOB_APPLY_ASSISTANT_ID: str | None = None
+
+    @field_validator("DATABASE_URL", mode="before")
+    def db_url(cls, v, values):
+        if isinstance(v, str):
+            return v
+        return f"postgresql://postgres:{values.data.get('SUPABASE_KEY')}@{values.data.get('SUPABASE_URL')}"
 
     @property
     def allowed_origins(self) -> list[str]:
