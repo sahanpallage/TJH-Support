@@ -7,6 +7,8 @@ import {
   type Conversation,
   type Message,
 } from "@/contexts/AdminChatContext";
+import { MarkdownText } from "@/components/thread/markdown-text";
+import "@/components/admin/chat-markdown.css";
 
 export function ChatPanel({
   conversation,
@@ -26,6 +28,15 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef<number>(0);
   const startWidthRef = useRef<number>(width);
+
+  // Track typing state for agent messages
+  const [typingMessage, setTypingMessage] = useState<{
+    id: number;
+    fullText: string;
+    displayedText: string;
+  } | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastAgentMessageIdRef = useRef<number | null>(null);
 
   // Update startWidthRef when width prop changes
   useEffect(() => {
@@ -129,7 +140,97 @@ export function ChatPanel({
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isSending]);
+  }, [messages, isSending, typingMessage]);
+
+  // Handle typing animation for new agent messages
+  const prevIsSendingRef = useRef(isSending);
+  const processedMessageIdsRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    // Trigger typing animation when we transition from sending to not sending
+    // OR when a new agent message appears that we haven't processed yet
+    const sendingCompleted = prevIsSendingRef.current && !isSending;
+
+    if (sendingCompleted || !isSending) {
+      // Find the last agent message
+      const lastAgentMessage = messages
+        .filter((m) => m.author === "agent")
+        .sort((a, b) => b.id - a.id)[0];
+
+      if (
+        lastAgentMessage &&
+        !processedMessageIdsRef.current.has(lastAgentMessage.id) &&
+        !typingMessage // Don't start new animation if one is already running
+      ) {
+        // Mark this message as being processed
+        processedMessageIdsRef.current.add(lastAgentMessage.id);
+        lastAgentMessageIdRef.current = lastAgentMessage.id;
+
+        // Start typing animation immediately
+        setTypingMessage({
+          id: lastAgentMessage.id,
+          fullText: lastAgentMessage.text,
+          displayedText: "",
+        });
+      }
+    }
+
+    prevIsSendingRef.current = isSending;
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, [messages, isSending, typingMessage]);
+
+  // Typing animation effect
+  useEffect(() => {
+    if (!typingMessage) return;
+
+    const fullText = typingMessage.fullText;
+    const currentLength = typingMessage.displayedText.length;
+
+    if (currentLength < fullText.length) {
+      // Calculate typing speed - type faster for better UX
+      // Type word by word for natural feel, character by character for punctuation
+      const remainingText = fullText.slice(currentLength);
+      const nextSpaceIndex = remainingText.indexOf(" ");
+      const nextNewlineIndex = remainingText.indexOf("\n");
+
+      // Determine how many characters to add
+      let charsToAdd = 1;
+      if (nextSpaceIndex !== -1 && nextSpaceIndex < 5) {
+        // If next word is close, type the whole word
+        charsToAdd = nextSpaceIndex + 1;
+      } else if (nextNewlineIndex !== -1 && nextNewlineIndex < 3) {
+        // If next newline is close, type to newline
+        charsToAdd = nextNewlineIndex + 1;
+      }
+
+      // Adjust speed: faster for words, slower for punctuation
+      const isPunctuation = /[.,!?;:]/.test(remainingText[0]);
+      const delay = isPunctuation ? 80 : 25; // Slight pause at punctuation, visible typing speed
+
+      typingTimeoutRef.current = setTimeout(() => {
+        setTypingMessage({
+          ...typingMessage,
+          displayedText: fullText.slice(0, currentLength + charsToAdd),
+        });
+      }, delay);
+    } else {
+      // Typing complete, clear after a brief moment
+      typingTimeoutRef.current = setTimeout(() => {
+        setTypingMessage(null);
+      }, 200);
+    }
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, [typingMessage]);
 
   async function handleSubmit() {
     const text = input.trim();
@@ -194,23 +295,61 @@ export function ChatPanel({
           </div>
         ) : (
           <>
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`max-w-[90%] rounded-lg px-3 py-2 ${
-                  m.author === "admin"
-                    ? "ml-auto bg-sky-600 text-white"
-                    : "mr-auto bg-slate-100 text-slate-800"
-                }`}
-              >
-                {m.text}
-              </div>
-            ))}
-            {isSending && (
+            {messages.map((m) => {
+              // Check if this message is currently being typed
+              const isTyping = typingMessage?.id === m.id;
+              const displayText =
+                isTyping && typingMessage
+                  ? typingMessage.displayedText
+                  : m.text;
+              const showCursor =
+                isTyping &&
+                typingMessage &&
+                typingMessage.displayedText.length <
+                  typingMessage.fullText.length;
+
+              return (
+                <div
+                  key={m.id}
+                  className={`max-w-[90%] rounded-lg px-4 py-3 ${
+                    m.author === "admin"
+                      ? "ml-auto bg-sky-600 text-white"
+                      : "mr-auto bg-slate-100 text-slate-800"
+                  }`}
+                >
+                  {m.author === "agent" ? (
+                    <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                      {displayText && displayText.length > 0 ? (
+                        <div className="space-y-1">
+                          <MarkdownText>{displayText}</MarkdownText>
+                          {showCursor && (
+                            <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-slate-600 align-middle" />
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-500">...</span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="break-words whitespace-pre-wrap text-white">
+                      {m.text}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+            {isSending && !typingMessage && (
               <div className="mr-auto max-w-[90%] rounded-lg bg-slate-100 px-3 py-2 text-slate-800">
-                <span className="text-xs text-slate-500 italic">
-                  Agent is typing...
-                </span>
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1">
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.3s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.15s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" />
+                  </div>
+                  <span className="text-xs text-slate-500 italic">
+                    Agent is thinking...
+                  </span>
+                </div>
               </div>
             )}
             <div ref={messagesEndRef} />
