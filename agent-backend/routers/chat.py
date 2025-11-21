@@ -1,7 +1,8 @@
 # backend/routers/chat.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import cast
+from typing import cast, List, Optional
 
 from config import settings
 from db.database import get_db
@@ -17,20 +18,82 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("/conversations/{conversation_id}/messages", response_model=ChatMessageResponse)
 async def send_chat_message(
     conversation_id: int,
-    payload: ChatMessageRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    """
+    Send a chat message with optional file attachments.
+    Supports both:
+    - JSON: {"message": "text"} (backward compatible)
+    - FormData: message=text&files=file1&files=file2 (for file uploads)
+    """
     conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     external_thread_id = cast(str, conv.external_thread_id)
+    customer_id = cast(int, conv.customer_id)  # Cast to int for type safety
+    
+    # Check content type to determine if it's FormData or JSON
+    content_type = request.headers.get("content-type", "")
+    message_text = ""
+    files: List[UploadFile] = []
+    
+    if "multipart/form-data" in content_type:
+        # FormData request - parse form data
+        form = await request.form()
+        message_field = form.get("message")
+        if message_field:
+            message_text = str(message_field) if isinstance(message_field, str) else ""
+        file_list = form.getlist("files")
+        files = [f for f in file_list if isinstance(f, UploadFile)]
+    else:
+        # JSON request - parse JSON body
+        try:
+            body = await request.json()
+            payload = ChatMessageRequest(**body)
+            message_text = payload.message
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid request format: {str(e)}",
+            )
+    
+    uploaded_file_info = []
+    
+    # Upload files to the agent if provided
+    if files:
+        for file in files:
+            try:
+                file_contents = await file.read()
+                # Upload file to the agent
+                await job_apply_client.upload_document(
+                    customer_id=customer_id,
+                    file_bytes=file_contents,
+                    filename=file.filename or "uploaded_file",
+                    content_type=file.content_type or "application/octet-stream",
+                )
+                uploaded_file_info.append(f"{file.filename} ({len(file_contents)} bytes)")
+            except Exception as e:
+                # Log error but continue - don't fail the whole message
+                print(f"Warning: Failed to upload file {file.filename}: {e}")
+    
+    # Append file information to message
+    if uploaded_file_info:
+        file_list = ", ".join(uploaded_file_info)
+        if message_text:
+            message_text = f"{message_text}\n\n[Uploaded files: {file_list}]"
+        else:
+            message_text = f"[Uploaded files: {file_list}]"
+    
+    # Ensure message_text is a string
+    message_text = str(message_text) if message_text else ""
     
     # Save admin message to database
     admin_message = Message(
         conversation_id=conversation_id,
         author="admin",
-        text=payload.message,
+        text=message_text,
     )
     db.add(admin_message)
     db.flush()  # Flush to get the ID, but don't commit yet
@@ -39,7 +102,7 @@ async def send_chat_message(
     try:
         external_resp = await job_apply_client.send_message(
             thread_id=external_thread_id,
-            message=payload.message,
+            message=message_text,
         )
     except Exception as e:
         db.rollback()

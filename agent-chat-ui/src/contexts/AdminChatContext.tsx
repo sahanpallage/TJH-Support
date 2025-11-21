@@ -38,7 +38,11 @@ type AdminChatContextType = {
   setSelectedConversationId: (id: number | null) => void;
 
   messages: Message[]; // all messages, filtered per conversation where needed
-  sendMessage: (conversationId: number, text: string) => Promise<void>;
+  sendMessage: (
+    conversationId: number,
+    text: string,
+    files?: File[],
+  ) => Promise<void>;
   createConversation: (title?: string) => Promise<Conversation | null>;
   deleteConversation: (conversationId: number) => Promise<void>;
   isSending: boolean;
@@ -185,15 +189,23 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
   }
 
   // -------- sendMessage: frontend → FastAPI → JobProMax agent --------
-  async function sendMessage(conversationId: number, text: string) {
-    if (!text.trim()) return;
+  async function sendMessage(
+    conversationId: number,
+    text: string,
+    files?: File[],
+  ) {
+    // Require either text or files
+    if (!text.trim() && (!files || files.length === 0)) return;
+
+    // Build message text for display
+    const displayText = text.trim() || "[Files attached]";
 
     // Optimistic update: show admin message immediately
     const tempAdminMessage: Message = {
       id: -1, // Temporary ID
       conversation_id: conversationId,
       author: "admin",
-      text: text.trim(),
+      text: displayText,
       created_at: new Date().toISOString(),
     };
 
@@ -204,19 +216,48 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
     try {
       // Add cache-busting to prevent browser caching
       const timestamp = Date.now();
-      const res = await fetch(
-        `${API_BASE}/chat/conversations/${conversationId}/messages?t=${timestamp}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            Pragma: "no-cache",
-            Expires: "0",
+
+      let res: Response;
+
+      // If files are provided, use FormData; otherwise use JSON
+      if (files && files.length > 0) {
+        const formData = new FormData();
+        formData.append("message", text.trim() || "");
+
+        // Append all files
+        for (const file of files) {
+          formData.append("files", file);
+        }
+
+        res = await fetch(
+          `${API_BASE}/chat/conversations/${conversationId}/messages?t=${timestamp}`,
+          {
+            method: "POST",
+            headers: {
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              Pragma: "no-cache",
+              Expires: "0",
+              // Don't set Content-Type for FormData - browser will set it with boundary
+            },
+            body: formData,
           },
-          body: JSON.stringify({ message: text }),
-        },
-      );
+        );
+      } else {
+        // No files, use JSON (backward compatible)
+        res = await fetch(
+          `${API_BASE}/chat/conversations/${conversationId}/messages?t=${timestamp}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              Pragma: "no-cache",
+              Expires: "0",
+            },
+            body: JSON.stringify({ message: text }),
+          },
+        );
+      }
 
       if (!res.ok) {
         // Remove optimistic message on error

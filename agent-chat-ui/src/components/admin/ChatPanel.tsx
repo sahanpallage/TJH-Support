@@ -44,8 +44,11 @@ export function ChatPanel({
 }) {
   const [input, setInput] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounterRef = useRef<number>(0);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
   const { setShowChatPanel, sendMessage, isSending } = useAdminChat();
   const containerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -61,6 +64,74 @@ export function ChatPanel({
       });
     }
   }, [uploadedFiles.length]);
+
+  // Drag and drop handlers
+  useEffect(() => {
+    if (!dropZoneRef.current) return;
+
+    const dropZone = dropZoneRef.current;
+
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer?.types?.includes("Files")) {
+        dragCounterRef.current += 1;
+        setDragOver(true);
+      }
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer?.types?.includes("Files")) {
+        dragCounterRef.current -= 1;
+        if (dragCounterRef.current <= 0) {
+          setDragOver(false);
+          dragCounterRef.current = 0;
+        }
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer?.types?.includes("Files")) {
+        setDragOver(true);
+      }
+    };
+
+    const handleDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current = 0;
+      setDragOver(false);
+
+      if (!e.dataTransfer?.files) return;
+
+      const files = Array.from(e.dataTransfer.files);
+      processFiles(files);
+    };
+
+    const handleDragEnd = () => {
+      dragCounterRef.current = 0;
+      setDragOver(false);
+    };
+
+    dropZone.addEventListener("dragenter", handleDragEnter);
+    dropZone.addEventListener("dragleave", handleDragLeave);
+    dropZone.addEventListener("dragover", handleDragOver);
+    dropZone.addEventListener("drop", handleDrop);
+    dropZone.addEventListener("dragend", handleDragEnd);
+
+    return () => {
+      dropZone.removeEventListener("dragenter", handleDragEnter);
+      dropZone.removeEventListener("dragleave", handleDragLeave);
+      dropZone.removeEventListener("dragover", handleDragOver);
+      dropZone.removeEventListener("drop", handleDrop);
+      dropZone.removeEventListener("dragend", handleDragEnd);
+      dragCounterRef.current = 0;
+    };
+  }, [uploadedFiles]);
 
   // Track typing state for agent messages
   const [typingMessage, setTypingMessage] = useState<{
@@ -265,17 +336,17 @@ export function ChatPanel({
     );
   }
 
-  // Handle file selection
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files || files.length === 0) {
-      console.log("[ChatPanel] No files selected");
+  // Shared function to process files (used by both file input and drag & drop)
+  function processFiles(files: FileList | File[]) {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) {
+      console.log("[ChatPanel] No files to process");
       return;
     }
 
-    console.log("[ChatPanel] Files selected:", {
-      count: files.length,
-      files: Array.from(files).map((f) => ({
+    console.log("[ChatPanel] Processing files:", {
+      count: fileArray.length,
+      files: fileArray.map((f) => ({
         name: f.name,
         type: f.type,
         size: f.size,
@@ -285,7 +356,16 @@ export function ChatPanel({
     const newFiles: UploadedFile[] = [];
     const errors: string[] = [];
 
-    Array.from(files).forEach((file) => {
+    // Check for duplicates
+    const existingFileNames = new Set(uploadedFiles.map((f) => f.file.name));
+
+    fileArray.forEach((file) => {
+      // Check for duplicates
+      if (existingFileNames.has(file.name)) {
+        errors.push(`${file.name}: File already added`);
+        return;
+      }
+
       // Check file type
       const isValidType =
         SUPPORTED_FILE_TYPES.includes(file.type) ||
@@ -326,6 +406,7 @@ export function ChatPanel({
       }
 
       newFiles.push(uploadedFile);
+      existingFileNames.add(file.name);
     });
 
     if (errors.length > 0) {
@@ -337,6 +418,13 @@ export function ChatPanel({
       setUploadedFiles((prev) => [...prev, ...newFiles]);
       console.log("[ChatPanel] Files added:", newFiles.length);
     }
+  }
+
+  // Handle file selection from input
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    processFiles(files);
 
     // Reset input
     if (fileInputRef.current) {
@@ -404,14 +492,12 @@ export function ChatPanel({
     }
 
     // Clear input and files after sending
-    const filesToSend = [...uploadedFiles];
+    const filesToSend = uploadedFiles.map((f) => f.file);
     setInput("");
     setUploadedFiles([]);
 
-    // Send message with file information
-    // Note: Files are included in the message text for now
-    // TODO: Implement actual file upload to backend if needed
-    await sendMessage(conversation.id, messageText);
+    // Send message with actual files
+    await sendMessage(conversation.id, text, filesToSend);
   }
 
   return (
@@ -532,7 +618,23 @@ export function ChatPanel({
       </div>
 
       {/* input */}
-      <div className="border-t border-slate-200 bg-white p-4">
+      <div
+        ref={dropZoneRef}
+        className={`relative border-t bg-white p-4 transition-colors ${
+          dragOver ? "border-sky-400 bg-sky-50" : "border-slate-200"
+        }`}
+      >
+        {/* Drag overlay indicator */}
+        {dragOver && (
+          <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-sky-400 bg-sky-50/95">
+            <div className="text-center">
+              <Paperclip className="mx-auto h-8 w-8 text-sky-500" />
+              <p className="mt-2 text-sm font-medium text-sky-700">
+                Drop files here to upload
+              </p>
+            </div>
+          </div>
+        )}
         {/* File previews - files stay in state until user clicks send */}
         {uploadedFiles.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
