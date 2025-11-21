@@ -52,26 +52,15 @@ export function ChatPanel({
   const startXRef = useRef<number>(0);
   const startWidthRef = useRef<number>(width);
 
-  // Debug: Log component render and feature availability
+  // Debug: Log when files are added/removed
   useEffect(() => {
-    console.log("[ChatPanel] Component rendered", {
-      conversationId: conversation?.id,
-      messagesCount: messages.length,
-      uploadedFilesCount: uploadedFiles.length,
-      timestamp: new Date().toISOString(),
-    });
-    console.log("[ChatPanel] File upload feature loaded:", {
-      supportedTypes: SUPPORTED_FILE_TYPES,
-      maxFileSize: MAX_FILE_SIZE,
-    });
-  }, [conversation?.id, messages.length, uploadedFiles.length]);
-
-  // Debug: Log when file input is available
-  useEffect(() => {
-    if (fileInputRef.current) {
-      console.log("[ChatPanel] File input element mounted");
+    if (uploadedFiles.length > 0) {
+      console.log("[ChatPanel] Files in state:", {
+        count: uploadedFiles.length,
+        files: uploadedFiles.map((f) => f.file.name),
+      });
     }
-  }, []);
+  }, [uploadedFiles.length]);
 
   // Track typing state for agent messages
   const [typingMessage, setTypingMessage] = useState<{
@@ -392,25 +381,36 @@ export function ChatPanel({
     // Require either text or files
     if (!text && uploadedFiles.length === 0) return;
 
-    console.log("[ChatPanel] Submitting message", {
+    console.log("[ChatPanel] Submitting message with files", {
       hasText: !!text,
       filesCount: uploadedFiles.length,
+      fileNames: uploadedFiles.map((f) => f.file.name),
     });
 
-    // For now, send text message with file info
-    // TODO: Implement actual file upload to backend
+    // Build message text - include user's prompt and file information
     let messageText = text;
     if (uploadedFiles.length > 0) {
       const fileList = uploadedFiles
-        .map((f) => `[File: ${f.file.name} (${formatFileSize(f.file.size)})]`)
-        .join("\n");
-      messageText = messageText
-        ? `${messageText}\n\n${fileList}`
-        : `Uploaded ${uploadedFiles.length} file(s):\n${fileList}`;
+        .map((f) => `${f.file.name} (${formatFileSize(f.file.size)})`)
+        .join(", ");
+
+      if (messageText) {
+        // User provided a prompt, include files in the message
+        messageText = `${messageText}\n\n[Attached files: ${fileList}]`;
+      } else {
+        // No prompt, just mention the files
+        messageText = `[Attached files: ${fileList}]`;
+      }
     }
 
+    // Clear input and files after sending
+    const filesToSend = [...uploadedFiles];
     setInput("");
     setUploadedFiles([]);
+
+    // Send message with file information
+    // Note: Files are included in the message text for now
+    // TODO: Implement actual file upload to backend if needed
     await sendMessage(conversation.id, messageText);
   }
 
@@ -533,20 +533,7 @@ export function ChatPanel({
 
       {/* input */}
       <div className="border-t border-slate-200 bg-white p-4">
-        {/* DEBUG: Test element to verify rendering - FORCE VISIBLE */}
-        <div
-          className="mb-2 border-2 border-yellow-500 bg-yellow-200 p-2 text-xs font-bold"
-          style={
-            {
-              display: "block",
-              visibility: "visible",
-              zIndex: 9999,
-            } as React.CSSProperties
-          }
-        >
-          🚨 DEBUG: File upload feature v2 - {new Date().toISOString()}
-        </div>
-        {/* File previews */}
+        {/* File previews - files stay in state until user clicks send */}
         {uploadedFiles.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {uploadedFiles.map((uploadedFile) => (
@@ -595,12 +582,7 @@ export function ChatPanel({
         >
           {/* Hidden file input */}
           <input
-            ref={(el) => {
-              fileInputRef.current = el;
-              if (el) {
-                console.log("[ChatPanel] File input mounted", el.id);
-              }
-            }}
+            ref={fileInputRef}
             type="file"
             multiple
             accept=".pdf,.doc,.docx,.txt,.md,image/*"
@@ -609,44 +591,14 @@ export function ChatPanel({
             id="file-upload-input"
           />
 
-          {/* File upload button - FORCE VISIBLE FOR DEBUGGING */}
+          {/* File upload button */}
           <label
             htmlFor="file-upload-input"
-            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border-2 border-red-500 bg-red-100 text-red-600 transition-colors hover:bg-red-200 hover:text-red-700"
+            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
             aria-label="Upload file"
             title="Upload PDF, DOCX, Text, or Image"
-            style={
-              {
-                display: "flex",
-                visibility: "visible",
-                opacity: 1,
-                minWidth: "32px",
-                minHeight: "32px",
-              } as React.CSSProperties
-            }
-            ref={(el) => {
-              if (el) {
-                console.log("[ChatPanel] Upload button label mounted", {
-                  htmlFor: el.htmlFor,
-                  hasPaperclip: !!el.querySelector("svg"),
-                  children: Array.from(el.children).map((c) => c.tagName),
-                });
-                // Force visibility
-                el.style.display = "flex";
-                el.style.visibility = "visible";
-                el.style.opacity = "1";
-              }
-            }}
           >
-            <Paperclip
-              className="h-4 w-4"
-              style={{
-                display: "block",
-                width: "16px",
-                height: "16px",
-                flexShrink: 0,
-              }}
-            />
+            <Paperclip className="h-4 w-4" />
           </label>
 
           <textarea
