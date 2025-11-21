@@ -64,7 +64,7 @@ function AdminLayoutContent({ children }: { children: ReactNode }) {
                 null
               }
               messages={messages.filter(
-                (m) => m.conversationId === selectedConversationId,
+                (m) => m.conversation_id === selectedConversationId,
               )}
               width={chatPanelWidth}
               onWidthChange={setChatPanelWidth}

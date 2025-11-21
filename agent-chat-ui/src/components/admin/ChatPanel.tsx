@@ -23,6 +23,7 @@ export function ChatPanel({
   const [isDragging, setIsDragging] = useState(false);
   const { setShowChatPanel, sendMessage, isSending } = useAdminChat();
   const containerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef<number>(0);
   const startWidthRef = useRef<number>(width);
 
@@ -125,6 +126,11 @@ export function ChatPanel({
     );
   }
 
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isSending]);
+
   async function handleSubmit() {
     const text = input.trim();
     if (!text || !conversation) return;
@@ -181,19 +187,35 @@ export function ChatPanel({
       </div>
 
       {/* messages */}
-      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3 text-xs">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`max-w-[90%] rounded-lg px-3 py-2 ${
-              m.author === "admin"
-                ? "ml-auto bg-sky-600 text-white"
-                : "mr-auto bg-slate-100 text-slate-800"
-            }`}
-          >
-            {m.text}
+      <div className="flex-1 space-y-2 overflow-y-auto scroll-smooth px-4 py-3 text-xs">
+        {messages.length === 0 && !isSending ? (
+          <div className="flex h-full items-center justify-center text-slate-400">
+            <p className="text-xs">No messages yet. Start the conversation!</p>
           </div>
-        ))}
+        ) : (
+          <>
+            {messages.map((m) => (
+              <div
+                key={m.id}
+                className={`max-w-[90%] rounded-lg px-3 py-2 ${
+                  m.author === "admin"
+                    ? "ml-auto bg-sky-600 text-white"
+                    : "mr-auto bg-slate-100 text-slate-800"
+                }`}
+              >
+                {m.text}
+              </div>
+            ))}
+            {isSending && (
+              <div className="mr-auto max-w-[90%] rounded-lg bg-slate-100 px-3 py-2 text-slate-800">
+                <span className="text-xs text-slate-500 italic">
+                  Agent is typing...
+                </span>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </>
+        )}
       </div>
 
       {/* input */}
