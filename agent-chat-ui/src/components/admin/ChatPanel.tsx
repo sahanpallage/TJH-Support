@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { GripVertical } from "lucide-react";
 import {
   useAdminChat,
   type Conversation,
@@ -10,16 +11,97 @@ import {
 export function ChatPanel({
   conversation,
   messages,
+  width = 320,
+  onWidthChange,
 }: {
   conversation: Conversation | null;
   messages: Message[];
+  width?: number;
+  onWidthChange?: (width: number) => void;
 }) {
   const [input, setInput] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const { setShowChatPanel, sendMessage, isSending } = useAdminChat();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const startXRef = useRef<number>(0);
+  const startWidthRef = useRef<number>(width);
+
+  // Update startWidthRef when width prop changes
+  useEffect(() => {
+    if (!isDragging) {
+      startWidthRef.current = width;
+    }
+  }, [width, isDragging]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!containerRef.current || !onWidthChange) return;
+
+    setIsDragging(true);
+    startXRef.current = e.clientX;
+    startWidthRef.current = width;
+
+    // Prevent text selection while dragging
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
+
+  useEffect(() => {
+    if (!isDragging || !onWidthChange) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+
+      const deltaX = startXRef.current - e.clientX; // Negative when dragging left (making wider)
+      const newWidth = startWidthRef.current + deltaX;
+
+      // Constrain width between min and max
+      const minWidth = 280;
+      const maxWidth = 800;
+      const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      onWidthChange(constrainedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, [isDragging, onWidthChange, width]);
 
   if (!conversation) {
     return (
-      <div className="flex h-full w-full flex-col">
+      <div
+        ref={containerRef}
+        className="relative flex h-full w-full flex-col"
+      >
+        {/* Resize handle on the left */}
+        {onWidthChange && (
+          <div
+            onMouseDown={handleMouseDown}
+            onClick={(e) => e.stopPropagation()}
+            className={`group absolute top-0 left-0 z-10 h-full w-2 cursor-col-resize transition-colors select-none ${
+              isDragging ? "bg-sky-500" : "bg-transparent hover:bg-sky-400"
+            }`}
+            title="Drag to resize chat panel"
+            style={{ touchAction: "none" }}
+          >
+            <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+              <GripVertical className="h-5 w-5 text-sky-500" />
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-end border-b border-slate-200 px-4 py-3">
           <button
             onClick={() => setShowChatPanel(false)}
@@ -52,7 +134,26 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-full w-full flex-col">
+    <div
+      ref={containerRef}
+      className="relative flex h-full w-full flex-col"
+    >
+      {/* Resize handle on the left */}
+      {onWidthChange && (
+        <div
+          onMouseDown={handleMouseDown}
+          onClick={(e) => e.stopPropagation()}
+          className={`group absolute top-0 left-0 z-10 h-full w-2 cursor-col-resize transition-colors select-none ${
+            isDragging ? "bg-sky-500" : "bg-transparent hover:bg-sky-400"
+          }`}
+          title="Drag to resize chat panel"
+          style={{ touchAction: "none" }}
+        >
+          <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+            <GripVertical className="h-5 w-5 text-sky-500" />
+          </div>
+        </div>
+      )}
       {/* header */}
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
         <div>

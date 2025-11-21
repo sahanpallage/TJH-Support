@@ -8,6 +8,7 @@ import { AdminChatProvider, useAdminChat } from "@/contexts/AdminChatContext";
 
 function AdminLayoutContent({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [chatPanelWidth, setChatPanelWidth] = useState(320); // 320px = w-80
   const { showChatPanel, conversations, messages, selectedConversationId } =
     useAdminChat();
 
@@ -53,7 +54,10 @@ function AdminLayoutContent({ children }: { children: ReactNode }) {
         <main className="flex-1 overflow-y-auto px-8 py-6">{children}</main>
 
         {showChatPanel && (
-          <aside className="hidden w-80 border-l border-slate-200 bg-white xl:flex">
+          <aside
+            className="hidden border-l border-slate-200 bg-white xl:flex"
+            style={{ width: `${chatPanelWidth}px` }}
+          >
             <ChatPanel
               conversation={
                 conversations.find((c) => c.id === selectedConversationId) ??
@@ -62,6 +66,8 @@ function AdminLayoutContent({ children }: { children: ReactNode }) {
               messages={messages.filter(
                 (m) => m.conversationId === selectedConversationId,
               )}
+              width={chatPanelWidth}
+              onWidthChange={setChatPanelWidth}
             />
           </aside>
         )}
