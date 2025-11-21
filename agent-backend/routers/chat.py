@@ -6,7 +6,9 @@ from typing import cast
 from config import settings
 from db.database import get_db
 from models.conversation import Conversation
+from models.message import Message
 from schemas.chat import ChatMessageRequest, ChatMessageResponse
+from schemas.message import MessageRead
 from services.job_apply_client import job_apply_client
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -24,6 +26,15 @@ async def send_chat_message(
 
     external_thread_id = cast(str, conv.external_thread_id)
     
+    # Save admin message to database
+    admin_message = Message(
+        conversation_id=conversation_id,
+        author="admin",
+        text=payload.message,
+    )
+    db.add(admin_message)
+    db.flush()  # Flush to get the ID, but don't commit yet
+    
     # Send message to the live Donely agent
     try:
         external_resp = await job_apply_client.send_message(
@@ -31,6 +42,7 @@ async def send_chat_message(
             message=payload.message,
         )
     except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=502,
             detail=f"Failed to send message to agent: {str(e)}",
@@ -40,7 +52,26 @@ async def send_chat_message(
     # The response typically contains a state with messages
     reply_text = _extract_reply_from_response(external_resp)
 
-    return ChatMessageResponse(reply=reply_text, raw=external_resp)
+    # Save agent response to database
+    agent_message = Message(
+        conversation_id=conversation_id,
+        author="agent",
+        text=reply_text,
+    )
+    db.add(agent_message)
+    db.commit()  # Commit both messages together
+    db.refresh(admin_message)
+    db.refresh(agent_message)
+
+    # Return both saved messages along with the response
+    return ChatMessageResponse(
+        reply=reply_text,
+        raw=external_resp,
+        messages=[
+            MessageRead.model_validate(admin_message),
+            MessageRead.model_validate(agent_message),
+        ],
+    )
 
 
 def _extract_reply_from_response(resp: dict) -> str:

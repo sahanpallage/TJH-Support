@@ -22,3 +22,4 @@ class Conversation(Base):
     )
 
     customer = relationship("Customer", back_populates="conversations")
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")

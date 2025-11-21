@@ -7,7 +7,8 @@ from config import settings
 from models.customer import Customer  # noqa: F401
 from models.conversation import Conversation  # noqa: F401
 from models.document import Document  # noqa: F401
-from routers import customers, conversations, chat, documents
+from models.message import Message  # noqa: F401
+from routers import customers, conversations, chat, documents, messages
 
 # Create tables only in development mode
 # Note: create_all() is idempotent - it only creates tables that don't exist
@@ -39,3 +40,4 @@ app.include_router(customers.router)
 app.include_router(conversations.router)
 app.include_router(chat.router)
 app.include_router(documents.router)
+app.include_router(messages.router)

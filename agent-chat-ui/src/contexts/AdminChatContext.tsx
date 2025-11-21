@@ -10,7 +10,6 @@ import {
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-const MESSAGES_STORAGE_KEY = "adminChat.messages";
 
 /* ---------- TYPES ---------- */
 
@@ -23,11 +22,11 @@ export type Conversation = {
 };
 
 export type Message = {
-  id: string;
-  conversationId: number;
-  author: "agent" | "admin";
+  id: number;
+  conversation_id: number;
+  author: "admin" | "agent";
   text: string;
-  createdAt: string;
+  created_at: string;
 };
 
 type AdminChatContextType = {
@@ -62,25 +61,7 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSending, setIsSending] = useState(false);
-
-  // hydrate chat history from localStorage (per browser)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(MESSAGES_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Message[];
-        setMessages(parsed);
-      }
-    } catch (err) {
-      console.warn("Failed to parse stored messages", err);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages));
-  }, [messages]);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
   // -------- bootstrap: ensure customer exists + load conversations --------
   useEffect(() => {
@@ -119,6 +100,8 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
 
         if (convData.length > 0) {
           setSelectedConversationId(convData[0].id);
+          // Load messages for the first conversation
+          await loadMessages(convData[0].id);
         }
       } catch (err) {
         console.error("Failed to bootstrap admin chat context", err);
@@ -128,34 +111,118 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
     bootstrap();
   }, []);
 
+  // Load messages when conversation selection changes
+  useEffect(() => {
+    if (selectedConversationId !== null) {
+      loadMessages(selectedConversationId).catch(console.error);
+    } else {
+      setMessages([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConversationId]);
+
+  // Function to load messages from backend with retry logic
+  async function loadMessages(
+    conversationId: number,
+    retries: number = 3,
+    delay: number = 300,
+  ): Promise<void> {
+    setIsLoadingMessages(true);
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        // Add cache-busting timestamp to prevent browser caching
+        const timestamp = Date.now();
+        const res = await fetch(
+          `${API_BASE}/messages/conversation/${conversationId}?t=${timestamp}`,
+          {
+            method: "GET",
+            headers: {
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              Pragma: "no-cache",
+              Expires: "0",
+            },
+          },
+        );
+
+        if (!res.ok) {
+          if (attempt < retries - 1) {
+            // Wait before retrying with exponential backoff
+            await new Promise((resolve) =>
+              setTimeout(resolve, delay * Math.pow(2, attempt)),
+            );
+            continue;
+          }
+          console.error("Failed to load messages", res.status);
+          setMessages([]);
+          return;
+        }
+
+        const data: Message[] = await res.json();
+        // Use requestAnimationFrame for smooth cross-browser updates
+        if (typeof window !== "undefined") {
+          requestAnimationFrame(() => {
+            setMessages(data);
+          });
+        } else {
+          setMessages(data);
+        }
+        return;
+      } catch (err) {
+        if (attempt < retries - 1) {
+          // Wait before retrying
+          await new Promise((resolve) =>
+            setTimeout(resolve, delay * Math.pow(2, attempt)),
+          );
+          continue;
+        }
+        console.error("Error loading messages", err);
+        setMessages([]);
+      } finally {
+        setIsLoadingMessages(false);
+      }
+    }
+  }
+
   // -------- sendMessage: frontend → FastAPI → JobProMax agent --------
   async function sendMessage(conversationId: number, text: string) {
     if (!text.trim()) return;
 
-    const now = new Date().toISOString();
-    const adminMessage: Message = {
-      id: crypto.randomUUID(),
-      conversationId,
+    // Optimistic update: show admin message immediately
+    const tempAdminMessage: Message = {
+      id: -1, // Temporary ID
+      conversation_id: conversationId,
       author: "admin",
-      text,
-      createdAt: now,
+      text: text.trim(),
+      created_at: new Date().toISOString(),
     };
 
-    // Optimistic append of admin message
-    setMessages((prev) => [...prev, adminMessage]);
+    // Add optimistic message immediately for smooth UX
+    setMessages((prev) => [...prev, tempAdminMessage]);
 
     setIsSending(true);
     try {
+      // Add cache-busting to prevent browser caching
+      const timestamp = Date.now();
       const res = await fetch(
-        `${API_BASE}/chat/conversations/${conversationId}/messages`,
+        `${API_BASE}/chat/conversations/${conversationId}/messages?t=${timestamp}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
+          },
           body: JSON.stringify({ message: text }),
         },
       );
 
       if (!res.ok) {
+        // Remove optimistic message on error
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== -1 || m.text !== text.trim()),
+        );
         console.error(
           "Failed to send chat message",
           res.status,
@@ -165,19 +232,43 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
       }
 
       const data = await res.json();
-      const replyText: string =
-        data.reply || data.message || data.content || "(no reply)";
 
-      const agentMessage: Message = {
-        id: crypto.randomUUID(),
-        conversationId,
-        author: "agent",
-        text: replyText,
-        createdAt: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, agentMessage]);
+      // If backend returns messages, use them directly (faster and more reliable)
+      if (
+        data.messages &&
+        Array.isArray(data.messages) &&
+        data.messages.length > 0
+      ) {
+        // Use requestAnimationFrame for smooth cross-browser updates
+        if (typeof window !== "undefined") {
+          requestAnimationFrame(() => {
+            setMessages((prev) => {
+              // Remove optimistic message and add real messages
+              const filtered = prev.filter(
+                (m) => !(m.id === -1 && m.text === text.trim()),
+              );
+              return [...filtered, ...data.messages];
+            });
+          });
+        } else {
+          setMessages((prev) => {
+            const filtered = prev.filter(
+              (m) => !(m.id === -1 && m.text === text.trim()),
+            );
+            return [...filtered, ...data.messages];
+          });
+        }
+      } else {
+        // Fallback: reload messages if backend doesn't return them
+        // Use a small delay to ensure database commit is propagated
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await loadMessages(conversationId);
+      }
     } catch (err) {
+      // Remove optimistic message on error
+      setMessages((prev) =>
+        prev.filter((m) => !(m.id === -1 && m.text === text.trim())),
+      );
       console.error("Error talking to chat backend", err);
     } finally {
       setIsSending(false);
@@ -215,6 +306,8 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
       setConversations((prev) => [newConversation, ...prev]);
       setSelectedConversationId(newConversation.id);
       setShowChatPanel(true);
+      // Load messages for the new conversation (will be empty initially)
+      await loadMessages(newConversation.id);
       return newConversation;
     } catch (err) {
       console.error("Error creating conversation", err);
@@ -253,9 +346,10 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
 
         return updated;
       });
-      setMessages((prev) =>
-        prev.filter((message) => message.conversationId !== conversationId),
-      );
+      // Clear messages if the deleted conversation was selected
+      if (selectedConversationId === conversationId) {
+        setMessages([]);
+      }
     } catch (err) {
       console.error("Error deleting conversation", err);
     }
