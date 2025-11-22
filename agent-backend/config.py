@@ -23,10 +23,9 @@ class Settings(BaseSettings):
         alias="allowed_origins"
     )
 
-    # External API settings
-    JOB_APPLY_API_BASE: str | None = None
-    JOB_APPLY_API_KEY: str | None = None
-    JOB_APPLY_ASSISTANT_ID: str | None = None
+    # OpenAI Assistant API settings (required)
+    OPENAI_API_KEY: str
+    OPENAI_ASSISTANT_ID: str
 
     @field_validator("DATABASE_URL", mode="before")
     def db_url(cls, v, values):
@@ -44,6 +43,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         populate_by_name=True,
+        extra="ignore",  # Ignore extra environment variables that aren't in the model
     )
 
 

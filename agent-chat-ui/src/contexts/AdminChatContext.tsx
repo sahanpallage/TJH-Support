@@ -225,9 +225,35 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
         formData.append("message", text.trim() || "");
 
         // Append all files
+        console.log("[AdminChatContext] Sending files:", files.length);
         for (const file of files) {
+          console.log(
+            "[AdminChatContext] Appending file:",
+            file.name,
+            file.type,
+            file.size,
+            "bytes",
+          );
           formData.append("files", file);
         }
+
+        // Log FormData contents (for debugging) - but don't iterate as it consumes the FormData
+        console.log("[AdminChatContext] FormData prepared with:", {
+          message: text.trim() || "",
+          filesCount: files.length,
+          fileNames: files.map((f) => f.name),
+        });
+
+        // Log what we're about to send (without consuming FormData)
+        console.log("[AdminChatContext] Sending FormData with:", {
+          messageLength: text.trim().length,
+          filesCount: files.length,
+          fileDetails: files.map((f) => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+          })),
+        });
 
         res = await fetch(
           `${API_BASE}/chat/conversations/${conversationId}/messages?t=${timestamp}`,
@@ -241,6 +267,12 @@ export function AdminChatProvider({ children }: { children: ReactNode }) {
             },
             body: formData,
           },
+        );
+
+        console.log(
+          "[AdminChatContext] Response status:",
+          res.status,
+          res.statusText,
         );
       } else {
         // No files, use JSON (backward compatible)

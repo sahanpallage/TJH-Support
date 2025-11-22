@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from db.database import get_db
 from models.document import Document
 from schemas.document import DocumentCreate, DocumentRead
-from services.job_apply_client import job_apply_client
+from services.openai_client import get_openai_client
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -19,19 +19,20 @@ async def upload_document(
 ):
     contents = await file.read()
 
-    # optionally send to external job-apply agent
+    # Upload document to OpenAI
     try:
-        _ = await job_apply_client.upload_document(
+        client = get_openai_client()
+        file_id = await client.upload_document(
             customer_id=customer_id,
             file_bytes=contents,
             filename=file.filename or "uploaded_file",
             content_type=file.content_type or "application/octet-stream",
         )
+        if file_id:
+            print(f"[Documents] Uploaded document to OpenAI, file_id: {file_id}")
     except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to upload document to external agent: {e}",
-        )
+        print(f"[Documents] Warning: Failed to upload document to OpenAI: {e}")
+        # Continue anyway - document will still be stored locally
 
     # store document record (here we assume URL is a GDrive link passed as title for now)
     doc = Document(

@@ -8,7 +8,7 @@ from config import settings
 from db.database import get_db
 from models.conversation import Conversation
 from schemas.conversation import ConversationCreate, ConversationRead
-from services.job_apply_client import job_apply_client
+from services.openai_client import get_openai_client
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -18,17 +18,22 @@ async def create_conversation(
     payload: ConversationCreate,
     db: Session = Depends(get_db),
 ):
-    # Create a new thread on the live Donely agent
+    # Create a new thread on the OpenAI assistant
     try:
-        external_resp = await job_apply_client.create_thread()
+        client = get_openai_client()
+        print(f"[Conversations] Using OpenAI Assistant API")
+        
+        external_resp = await client.create_thread()
         external_thread_id = external_resp.get("thread_id") or external_resp.get("id")
         
         if not external_thread_id:
-            raise ValueError(f"Agent did not return a thread ID. Response: {external_resp}")
+            raise ValueError(f"OpenAI did not return a thread ID. Response: {external_resp}")
         
-        print(f"Created thread with ID: {external_thread_id}")
+        print(f"[Conversations] Created OpenAI thread with ID: {external_thread_id}")
     except Exception as e:
-        print(f"Error creating thread with live agent: {e}")
+        print(f"[Conversations] Error creating OpenAI thread: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=502,
             detail=f"Failed to create conversation thread: {str(e)}",

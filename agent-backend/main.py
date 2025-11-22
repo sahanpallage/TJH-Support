@@ -1,6 +1,7 @@
 from db.database import Base, engine
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 from config import settings
 # Import model classes explicitly so SQLAlchemy registers them with Base
@@ -24,7 +25,21 @@ if settings.environment == "development":
 else:
     print("Skipping table creation (production mode - use migrations)")
 
-app = FastAPI(title="JobProMax Internal API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Log configuration
+    print("\n" + "="*60)
+    print("Agent Configuration:")
+    print(f"  OPENAI_API_KEY: {'***configured***' if settings.OPENAI_API_KEY else 'NOT SET'}")
+    print(f"  OPENAI_ASSISTANT_ID: {settings.OPENAI_ASSISTANT_ID or 'NOT SET'}")
+    print("  Mode: OpenAI Assistant API (Direct)")
+    print("="*60 + "\n")
+    yield
+    # Shutdown (if needed)
+
+
+app = FastAPI(title="JobProMax Internal API", version="0.1.0", lifespan=lifespan)
 
 origins = settings.allowed_origins or [settings.frontend_url]
 
